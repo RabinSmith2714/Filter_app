@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Face Filters</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            position: relative;
+            margin: 20px;
+        }
+        #video {
+            transform: scaleX(-1);
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1);
+        }
+        .controls {
+            margin: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .filter-btn {
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .filter-btn:hover {
+            background: #45a049;
+        }
+        .filter-btn.active {
+            background: #2196F3;
+        }
+        .status {
+            margin-top: 10px;
+            color: #666;
+        }
+        .back-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            background: #6b48ff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        .back-btn:hover {
+            background: #5536e0;
+        }
+    </style>
+</head>
+<body>
+    <a href="landing.html" class="back-btn">← Back to Home</a>
+    <h1>Face Filters</h1>
+    <div class="container">
+        <video id="video" width="640" height="480" autoplay></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+    <div class="controls">
+        <div class="filter-grid">
+            <button class="filter-btn" data-filter="crown">👑 Crown</button>
+            <button class="filter-btn" data-filter="sunglasses">😎 Sunglasses</button>
+            <button class="filter-btn" data-filter="hat">🎩 Hat</button>
+            <button class="filter-btn" data-filter="mustache">🧔 Mustache</button>
+            <button class="filter-btn" data-filter="balloons">🎈 Balloons</button>
+            <button class="filter-btn" data-filter="fireworks">🎆 Fireworks</button>
+            <button class="filter-btn" data-filter="rainbow">🌈 Rainbow</button>
+            <button class="filter-btn" data-filter="sparkles">✨ Sparkles</button>
+            <button class="filter-btn" data-filter="none">❌ None</button>
+        </div>
+        <div class="status" id="status">Loading...</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const filterButtons = document.querySelectorAll('.filter-btn');
+
+        let currentFilter = 'none';
+        let faceMesh;
+        let particles = [];
+        let lastTime = 0;
+
+        // Initialize MediaPipe Face Mesh
+        async function initFaceMesh() {
+            faceMesh = new FaceMesh({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+                }
+            });
+
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            faceMesh.onResults(onResults);
+
+            const camera = new Camera(video, {
+                onFrame: async () => {
+                    await faceMesh.send({image: video});
+                },
+                width: 640,
+                height: 480
+            });
+
+            await camera.start();
+            statusDiv.textContent = 'Camera started';
+        }
+
+        // Handle filter selection
+        filterButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const filter = button.dataset.filter;
+                currentFilter = filter;
+                filterButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                particles = []; // Reset particles when changing filters
+
+                // Track filter usage
+                if (filter !== 'none') {
+                    const formData = new FormData();
+                    formData.append('filterName', filter);
+                    
+                    fetch('/Filter/track_filter.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            console.error('Failed to track filter usage:', data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error tracking filter usage:', error);
+                    });
+                }
+            });
+        });
+
+        // Particle system for effects
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = Math.random() * 5 + 2;
+                this.speedX = Math.random() * 6 - 3;
+                this.speedY = Math.random() * 6 - 3;
+                this.life = 1;
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 0.02;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Draw filters
+        function drawCrown(landmarks) {
+            const forehead = landmarks[10];
+            const leftEye = landmarks[33];
+            const rightEye = landmarks[362];
+            
+            ctx.beginPath();
+            ctx.moveTo((leftEye.x - 0.2) * canvas.width, (forehead.y - 0.1) * canvas.height);
+            
+            // Draw crown points
+            for (let i = 0; i < 5; i++) {
+                const x = (leftEye.x - 0.2 + (rightEye.x - leftEye.x + 0.4) * i / 4) * canvas.width;
+                const y = (forehead.y - 0.1 - 0.05 * (i % 2)) * canvas.height;
+                ctx.lineTo(x, y);
+            }
+            
+            ctx.strokeStyle = 'gold';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // Add sparkles
+            if (Math.random() < 0.3) {
+                particles.push(new Particle(
+                    (leftEye.x + rightEye.x) * canvas.width / 2,
+                    (forehead.y - 0.15) * canvas.height,
+                    'gold'
+                ));
+            }
+        }
+
+        function drawBalloons(landmarks) {
+            const forehead = landmarks[10];
+            
+            // Create new balloons
+            if (Math.random() < 0.1) {
+                const x = (forehead.x + Math.random() * 0.4 - 0.2) * canvas.width;
+                const y = (forehead.y - 0.3) * canvas.height;
+                const colors = ['red', 'blue', 'green', 'yellow', 'purple'];
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                particles.push(new Particle(x, y, color));
+            }
+            
+            // Update and draw existing balloons
+            particles = particles.filter(particle => {
+                particle.speedY = -2; // Float upward
+                particle.update();
+                particle.draw();
+                return particle.life > 0;
+            });
+        }
+
+        function drawFireworks(landmarks) {
+            const forehead = landmarks[10];
+            
+            // Create new fireworks
+            if (Math.random() < 0.05) {
+                const x = (forehead.x + Math.random() * 0.4 - 0.2) * canvas.width;
+                const y = (forehead.y - 0.3) * canvas.height;
+                for (let i = 0; i < 20; i++) {
+                    particles.push(new Particle(x, y, `hsl(${Math.random() * 360}, 100%, 50%)`));
+                }
+            }
+            
+            // Update and draw existing particles
+            particles = particles.filter(particle => {
+                particle.update();
+                particle.draw();
+                return particle.life > 0;
+            });
+        }
+
+        function drawRainbow(landmarks) {
+            const forehead = landmarks[10];
+            const leftEye = landmarks[33];
+            const rightEye = landmarks[362];
+            
+            const gradient = ctx.createLinearGradient(
+                (leftEye.x - 0.2) * canvas.width,
+                (forehead.y - 0.1) * canvas.height,
+                (rightEye.x + 0.2) * canvas.width,
+                (forehead.y - 0.1) * canvas.height
+            );
+            
+            gradient.addColorStop(0, 'red');
+            gradient.addColorStop(0.2, 'orange');
+            gradient.addColorStop(0.4, 'yellow');
+            gradient.addColorStop(0.6, 'green');
+            gradient.addColorStop(0.8, 'blue');
+            gradient.addColorStop(1, 'purple');
+            
+            ctx.beginPath();
+            ctx.moveTo((leftEye.x - 0.2) * canvas.width, (forehead.y - 0.1) * canvas.height);
+            ctx.lineTo((rightEye.x + 0.2) * canvas.width, (forehead.y - 0.1) * canvas.height);
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 5;
+            ctx.stroke();
+        }
+
+        function drawSparkles(landmarks) {
+            const forehead = landmarks[10];
+            const leftEye = landmarks[33];
+            const rightEye = landmarks[362];
+            
+            // Create new sparkles
+            if (Math.random() < 0.2) {
+                const x = (leftEye.x + (rightEye.x - leftEye.x) * Math.random()) * canvas.width;
+                const y = (forehead.y - 0.1 + Math.random() * 0.2) * canvas.height;
+                particles.push(new Particle(x, y, 'white'));
+            }
+            
+            // Update and draw existing sparkles
+            particles = particles.filter(particle => {
+                particle.update();
+                particle.draw();
+                return particle.life > 0;
+            });
+        }
+
+        function drawSunglasses(landmarks) {
+            const leftEye = landmarks[33];
+            const rightEye = landmarks[362];
+            const eyeDistance = Math.abs(rightEye.x - leftEye.x) * canvas.width;
+            
+            // Draw sunglasses frame
+            ctx.beginPath();
+            ctx.moveTo((leftEye.x - 0.1) * canvas.width, leftEye.y * canvas.height);
+            ctx.lineTo((rightEye.x + 0.1) * canvas.width, rightEye.y * canvas.height);
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // Draw lenses
+            ctx.beginPath();
+            ctx.ellipse(
+                leftEye.x * canvas.width,
+                leftEye.y * canvas.height,
+                eyeDistance * 0.25,
+                eyeDistance * 0.15,
+                0,
+                0,
+                Math.PI * 2
+            );
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.ellipse(
+                rightEye.x * canvas.width,
+                rightEye.y * canvas.height,
+                eyeDistance * 0.25,
+                eyeDistance * 0.15,
+                0,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+        }
+
+        function drawHat(landmarks) {
+            const forehead = landmarks[10];
+            const leftEye = landmarks[33];
+            const rightEye = landmarks[362];
+            
+            // Draw hat base
+            ctx.beginPath();
+            ctx.moveTo((leftEye.x - 0.3) * canvas.width, (forehead.y - 0.1) * canvas.height);
+            ctx.lineTo((rightEye.x + 0.3) * canvas.width, (forehead.y - 0.1) * canvas.height);
+            ctx.lineTo((rightEye.x + 0.2) * canvas.width, (forehead.y - 0.3) * canvas.height);
+            ctx.lineTo((leftEye.x - 0.2) * canvas.width, (forehead.y - 0.3) * canvas.height);
+            ctx.closePath();
+            ctx.fillStyle = '#8B4513';
+            ctx.fill();
+            
+            // Draw hat band
+            ctx.beginPath();
+            ctx.moveTo((leftEye.x - 0.25) * canvas.width, (forehead.y - 0.15) * canvas.height);
+            ctx.lineTo((rightEye.x + 0.25) * canvas.width, (forehead.y - 0.15) * canvas.height);
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+
+        function drawMustache(landmarks) {
+            const nose = landmarks[1];
+            const leftMouth = landmarks[61];
+            const rightMouth = landmarks[291];
+            
+            // Draw mustache
+            ctx.beginPath();
+            ctx.moveTo((leftMouth.x - 0.1) * canvas.width, (nose.y + 0.05) * canvas.height);
+            ctx.quadraticCurveTo(
+                nose.x * canvas.width,
+                (nose.y + 0.1) * canvas.height,
+                (rightMouth.x + 0.1) * canvas.width,
+                (nose.y + 0.05) * canvas.height
+            );
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 5;
+            ctx.stroke();
+        }
+
+        function onResults(results) {
+            // Clear the canvas before drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the video frame
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            
+            if (results.multiFaceLandmarks) {
+                for (const landmarks of results.multiFaceLandmarks) {
+                    // Only draw face mesh if no filter is selected
+                    if (currentFilter === 'none') {
+                        drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+                        drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, {color: '#E0E0E0', lineWidth: 2});
+                        drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 1});
+                        drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, {color: '#3030FF', lineWidth: 1});
+                        drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYEBROW, {color: '#30FF30', lineWidth: 1});
+                        drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYEBROW, {color: '#3030FF', lineWidth: 1});
+                        drawConnectors(ctx, landmarks, FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 1});
+                    }
+                    
+                    // Apply selected filter
+                    switch (currentFilter) {
+                        case 'crown':
+                            drawCrown(landmarks);
+                            break;
+                        case 'sunglasses':
+                            drawSunglasses(landmarks);
+                            break;
+                        case 'hat':
+                            drawHat(landmarks);
+                            break;
+                        case 'mustache':
+                            drawMustache(landmarks);
+                            break;
+                        case 'balloons':
+                            drawBalloons(landmarks);
+                            break;
+                        case 'fireworks':
+                            drawFireworks(landmarks);
+                            break;
+                        case 'rainbow':
+                            drawRainbow(landmarks);
+                            break;
+                        case 'sparkles':
+                            drawSparkles(landmarks);
+                            break;
+                    }
+                }
+            }
+        }
+
+        // Start the application
+        initFaceMesh();
+    </script>
+</body>
+</html> 
